@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>🌍 SoilSense Map</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    #map {
+      height: 100vh;
+      width: 100%;
+    }
+
+    .red-marker {
+      background: #ef4444;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid white;
+    }
+  </style>
+</head>
+
+<body class="bg-gray-100 font-sans">
+
+  <!-- Header -->
+  <header class="fixed top-0 w-full z-10 bg-white shadow-md">
+    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+      <h1 class="text-xl font-semibold text-blue-600">🌍 SoilSense Map</h1>
+      <span class="text-sm text-gray-500">Theo dõi cảm biến thời gian thực</span>
+    </div>
+  </header>
+
+  <!-- Bản đồ -->
+  <div id="map" class="mt-14"></div>
+
+  <script>
+    // 🌍 Khởi tạo bản đồ Leaflet
+    const map = L.map("map").setView([10.7769, 106.7009], 13);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+
+    // 📦 Dữ liệu từ backend (EJS)
+    const data = <%- JSON.stringify(data || []) %>;
+    console.log("📡 Sensor data:", data);
+
+    const redIcon = L.divIcon({ className: "red-marker", iconSize: [16, 16] });
+
+    // 🧭 Tạo marker cho từng tọa độ
+    data.forEach(d => {
+      if (!d.records || d.records.length === 0) return;
+
+      const latest = d.records[d.records.length - 1];
+      const latestCond = latest.conductivity ?? "N/A";
+
+      const marker = L.marker([d.latitude, d.longitude], { icon: redIcon })
+        .addTo(map)
+        .bindTooltip(`⚡ ${latestCond}`, { permanent: true, direction: "top" });
+
+      const popup = L.popup({ maxWidth: 500 });
+      marker.bindPopup(popup);
+
+      // Khi click marker → render bảng dữ liệu
+      marker.on("click", () => {
+        let tableRows = "";
+        d.records.forEach((rec, i) => {
+          const time = new Date(rec.timestamp).toLocaleString("vi-VN");
+          tableRows += `
+            <tr class="hover:bg-gray-100">
+              <td class="px-3 py-2">${rec.temperature ?? "N/A"}°C</td>
+              <td class="px-3 py-2">${rec.humidity ?? "N/A"}%</td>
+              <td class="px-3 py-2">${rec.conductivity ?? "N/A"}</td>
+              <td class="px-3 py-2">${time}</td>
+              <td class="px-3 py-2">
+                <button 
+                  class="view-detail-btn bg-blue-500 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded-md" 
+                  data-lat="${d.latitude}" 
+                  data-lon="${d.longitude}" 
+                  data-index="${i}">
+                  Xem
+                </button>
+              </td>
+            </tr>`;
+        });
+
+        const popupHtml = `
+          <div id="popup-${d.latitude}-${d.longitude}" class="p-2">
+            <h2 class="font-semibold text-blue-600 mb-2">
+              📍 Tọa độ: ${d.latitude.toFixed(6)}, ${d.longitude.toFixed(6)}
+            </h2>
+            <p class="text-sm text-gray-600 mb-3">
+              📅 Số lần đo: <b>${d.records.length}</b>
+            </p>
+            <div class="overflow-x-auto">
+              <table class="min-w-full border text-sm text-gray-700">
+                <thead class="bg-gray-200">
+                  <tr>
+                    <th class="px-3 py-2 border">🌡 Nhiệt độ (°C)</th>
+                    <th class="px-3 py-2 border">💧 Độ ẩm (%)</th>
+                    <th class="px-3 py-2 border">⚡ Độ mặn</th>
+                    <th class="px-3 py-2 border">🕒 Thời gian</th>
+                    <th class="px-3 py-2 border">Chi tiết</th>
+                  </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+              </table>
+            </div>
+          </div>
+        `;
+
+        popup.setContent(popupHtml);
+        marker.openPopup();
+      });
+
+      // Khi popup mở → gắn sự kiện click cho nút "Xem"
+      marker.on("popupopen", (e) => {
+        setTimeout(() => {
+          const popupNode = e.popup.getElement();
+          if (!popupNode) return;
+
+          const buttons = popupNode.querySelectorAll(".view-detail-btn");
+          buttons.forEach(btn => {
+            btn.addEventListener("click", (event) => {
+              event.stopPropagation();
+              const lat = parseFloat(btn.dataset.lat);
+              const lon = parseFloat(btn.dataset.lon);
+              const index = parseInt(btn.dataset.index);
+
+              const item = data.find(dd => dd.latitude === lat && dd.longitude === lon)?.records[index];
+              if (item) {
+                alert(`📊 Chi tiết dữ liệu:
+🌡 Nhiệt độ: ${item.temperature ?? "N/A"}°C
+💧 Độ ẩm: ${item.humidity ?? "N/A"}%
+⚡ Độ mặn: ${item.conductivity ?? "N/A"}
+🕒 ${new Date(item.timestamp).toLocaleString("vi-VN")}`);
+              }
+            });
+          });
+        }, 50);
+      });
+    });
+  </script>
+</body>
+
+</html>
