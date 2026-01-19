@@ -72,7 +72,17 @@ export const DashboardPage = () => {
         <div className="flex gap-6 h-[calc(100vh-200px)]">
           {/* Left side - Map (2/3) */}
           <div className="flex-1 flex flex-col gap-4">
-            <DroneMap status={droneStatus} simulationMode={false} />
+            <DroneMap
+              status={droneStatus}
+              simulationMode={false}
+              onWaypointCreated={(wp) => {
+                // Send mock goto command; replace with real API when available
+                droneApi.sendCommand({ action: 'goto', lat: wp.lat, lng: wp.lng }).then(() => {
+                  // trigger status refresh
+                  setRefreshKey((prev) => prev + 1);
+                });
+              }}
+            />
           </div>
 
           {/* Right side - Sensor Info (1/3) */}

@@ -7,6 +7,7 @@ import type { DroneStatus } from '../../types';
 interface DroneMapProps {
   status: DroneStatus;
   simulationMode?: boolean;
+  onWaypointCreated?: (wp: { id: string; lat: number; lng: number }) => void;
 }
 
 interface SensorLocation {
@@ -26,7 +27,7 @@ interface Waypoint {
   lng: number;
 }
 
-export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
+export const DroneMap = ({ status, simulationMode = false, onWaypointCreated }: DroneMapProps) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const [sensorData, setSensorData] = useState<SensorLocation[]>([]);
@@ -35,6 +36,8 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
   const [centerLat, setCenterLat] = useState(10.7769);
   const [centerLng, setCenterLng] = useState(106.7009);
   const markersRef = useRef<Map<string, any>>(new Map());
+  const waypointIdRef = useRef<number>(0);
+  const routeRef = useRef<any>(null);
 
   // Initialize Leaflet map
   useEffect(() => {
@@ -64,6 +67,30 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
 
     map.on('move', handleMapMove);
 
+    // Click-to-add waypoint
+    const handleMapClick = (e: any) => {
+      const { lat, lng } = e.latlng;
+      const id = `${Date.now()}-${waypointIdRef.current++}`;
+      const newWp: Waypoint = { id, lat, lng };
+      setWaypoints((prev) => [...prev, newWp]);
+      if (onWaypointCreated) onWaypointCreated(newWp);
+    };
+    map.on('click', handleMapClick);
+
+    // Keyboard: Enter to make waypoint at precise viewport center
+    const handleKeydown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        const size = map.getSize();
+        const centerPx = (window as any).L.point(Math.floor(size.x / 2), Math.floor(size.y / 2));
+        const centerLatLng = map.containerPointToLatLng(centerPx);
+        const id = `${Date.now()}-${waypointIdRef.current++}`;
+        const newWp = { id, lat: centerLatLng.lat, lng: centerLatLng.lng };
+        setWaypoints((prev) => [...prev, newWp]);
+        if (onWaypointCreated) onWaypointCreated(newWp);
+      }
+    };
+    window.addEventListener('keydown', handleKeydown);
+
     // Fetch sensor data
     const fetchSensorData = async () => {
       try {
@@ -81,11 +108,15 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
       return () => {
         clearInterval(interval);
         map.off('move', handleMapMove);
+        map.off('click', handleMapClick);
+        window.removeEventListener('keydown', handleKeydown);
       };
     }
 
     return () => {
       map.off('move', handleMapMove);
+      map.off('click', handleMapClick);
+      window.removeEventListener('keydown', handleKeydown);
     };
   }, [simulationMode]);
 
@@ -96,13 +127,15 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
     const L = (window as any).L;
     const map = mapRef.current;
 
-    // Clear old sensor markers
+    // Clear old sensor markers (non-waypoint, non-drone)
+    const toDelete: string[] = [];
     markersRef.current.forEach((marker, key) => {
       if (!key.startsWith('waypoint-') && !key.startsWith('drone-')) {
         map.removeLayer(marker);
-        markersRef.current.delete(key);
+        toDelete.push(key);
       }
     });
+    toDelete.forEach((k) => markersRef.current.delete(k));
 
     // Add sensor markers
     sensorData.forEach((location) => {
@@ -110,8 +143,9 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
       const conductivity = latest?.conductivity ?? 'N/A';
 
       const redIcon = L.divIcon({
-        className: 'bg-red-500 border-2 border-white rounded-full w-4 h-4',
+        className: 'bg-red-500 border-2 border-white rounded-full w-4 h-4 shadow-[0_0_4px_rgba(0,0,0,0.35)]',
         iconSize: [16, 16],
+        iconAnchor: [8, 8],
       });
 
       const marker = L.marker([location.latitude, location.longitude], {
@@ -144,22 +178,26 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
     const map = mapRef.current;
 
     // Clear old waypoint markers
+    const toDelete: string[] = [];
     markersRef.current.forEach((marker, key) => {
       if (key.startsWith('waypoint-')) {
         map.removeLayer(marker);
-        markersRef.current.delete(key);
+        toDelete.push(key);
       }
     });
+    toDelete.forEach((k) => markersRef.current.delete(k));
 
-    waypoints.forEach((wp) => {
+    waypoints.forEach((wp, index) => {
+      const number = index + 1;
       const waypointIcon = L.divIcon({
         className: `${
           selectedWaypoint === wp.id
             ? 'bg-yellow-400 border-2 border-yellow-600'
-            : 'bg-purple-500 border-2 border-white'
-        } rounded-full w-5 h-5 flex items-center justify-center`,
-        iconSize: [20, 20],
-        html: '<div class="w-full h-full flex items-center justify-center"><div class="w-2 h-2 bg-white rounded-full"></div></div>',
+            : 'bg-purple-600 border-2 border-white'
+        } rounded-full w-6 h-6 flex items-center justify-center text-white text-[10px] font-bold shadow-[0_2px_6px_rgba(0,0,0,0.35)]`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+        html: `<div class="w-full h-full flex items-center justify-center">${number}</div>`,
       });
 
       const marker = L.marker([wp.lat, wp.lng], {
@@ -180,6 +218,22 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
 
       markersRef.current.set(`waypoint-${wp.id}`, marker);
     });
+
+    // Draw/refresh route polyline connecting waypoints
+    if (routeRef.current) {
+      map.removeLayer(routeRef.current);
+      routeRef.current = null;
+    }
+    if (waypoints.length >= 2) {
+      const latlngs = waypoints.map((w) => [w.lat, w.lng]);
+      const polyline = L.polyline(latlngs as any, {
+        color: '#a78bfa', // purple-400
+        weight: 3,
+        opacity: 0.9,
+        lineJoin: 'round',
+      }).addTo(map);
+      routeRef.current = polyline;
+    }
   }, [waypoints, selectedWaypoint]);
 
   // Update drone position on map
@@ -191,8 +245,9 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
 
     const droneMarker = mapRef.current.droneMarker;
     const droneIcon = L.divIcon({
-      className: 'bg-green-500 border-2 border-white rounded-full w-4 h-4',
+      className: 'bg-green-500 border-2 border-white rounded-full w-4 h-4 shadow-[0_0_4px_rgba(0,0,0,0.35)]',
       iconSize: [16, 16],
+      iconAnchor: [8, 8],
     });
 
     if (droneMarker) {
@@ -223,12 +278,18 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
   };
 
   const makeWaypointAtCenter = () => {
+    if (!mapRef.current) return;
+    const map = mapRef.current;
+    const size = map.getSize();
+    const centerPx = (window as any).L.point(Math.floor(size.x / 2), Math.floor(size.y / 2));
+    const centerLatLng = map.containerPointToLatLng(centerPx);
     const newWaypoint: Waypoint = {
-      id: Date.now().toString(),
-      lat: centerLat,
-      lng: centerLng,
+      id: `${Date.now()}-${waypointIdRef.current++}`,
+      lat: centerLatLng.lat,
+      lng: centerLatLng.lng,
     };
-    setWaypoints([...waypoints, newWaypoint]);
+    setWaypoints((prev) => [...prev, newWaypoint]);
+    if (onWaypointCreated) onWaypointCreated(newWaypoint);
   };
 
   return (
@@ -241,13 +302,22 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
         ref={mapContainer}
         className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden flex-1 relative"
       >
-        {/* Reticle */}
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 pointer-events-none">
-          <div className="w-8 h-8 border-2 border-cyan-400 rounded-full flex items-center justify-center">
-            <div className="w-1 h-1 bg-cyan-400 rounded-full" />
+        {/* Reticle crosshair lines */}
+        <div className="pointer-events-none absolute left-0 right-0 top-1/2 -translate-y-1/2 z-[9999]">
+          <div className="h-[2px] bg-cyan-300/70 shadow-[0_0_6px_rgba(34,211,238,0.7)]"></div>
+        </div>
+        <div className="pointer-events-none absolute top-0 bottom-0 left-1/2 -translate-x-1/2 z-[9999]">
+          <div className="w-[2px] h-full bg-cyan-300/70 shadow-[0_0_6px_rgba(34,211,238,0.7)]"></div>
+        </div>
+        {/* Reticle circle + coords */}
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[9999] pointer-events-none">
+          <div className="w-10 h-10 border-[2px] border-cyan-300/90 rounded-full flex items-center justify-center bg-cyan-300/10 shadow-[0_0_8px_rgba(34,211,238,0.8)] animate-pulse">
+            <div className="w-1.5 h-1.5 bg-cyan-300 rounded-full shadow-[0_0_6px_rgba(34,211,238,0.9)]" />
           </div>
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-xs text-cyan-400 font-mono mt-6 whitespace-nowrap">
-            ({centerLat.toFixed(4)}, {centerLng.toFixed(4)})
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 mt-6 whitespace-nowrap">
+            <span className="text-[11px] font-mono text-cyan-200 bg-black/50 border border-cyan-400/30 rounded px-2 py-0.5 shadow-[0_0_6px_rgba(34,211,238,0.4)]">
+              ({centerLat.toFixed(4)}, {centerLng.toFixed(4)})
+            </span>
           </div>
         </div>
       </div>
@@ -269,7 +339,7 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
         {waypoints.length > 0 && (
           <div className="bg-gray-900 rounded-lg p-3 border border-gray-700 max-h-32 overflow-y-auto">
             <p className="text-xs text-gray-400 mb-2">Waypoint List</p>
-            {waypoints.map((wp) => (
+            {waypoints.map((wp, index) => (
               <div
                 key={wp.id}
                 className={`flex items-center justify-between p-2 rounded mb-1 transition ${
@@ -279,7 +349,7 @@ export const DroneMap = ({ status, simulationMode = false }: DroneMapProps) => {
                 }`}
               >
                 <span className="text-xs text-gray-300 font-mono">
-                  {wp.lng.toFixed(6)}, {wp.lat.toFixed(6)}
+                  #{index + 1} — {wp.lng.toFixed(6)}, {wp.lat.toFixed(6)}
                 </span>
                 <button
                   onClick={() => removeWaypoint(wp.id)}

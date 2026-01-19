@@ -2,7 +2,9 @@ import type { AuthResponse, DroneStatus, SensorData, DroneCommand } from '../typ
 
 const API_BASE = '/api';
 const SOILSENSE_API = 'http://localhost:3000/api'; // SoilSense backend URL
-const USE_MOCK = true;
+let USE_MOCK = true;
+export const setUseMock = (value: boolean) => { USE_MOCK = value; };
+export const getUseMock = () => USE_MOCK;
 
 let mockDroneStatus: DroneStatus = {
   battery: 85,
@@ -69,9 +71,9 @@ export const droneApi = {
     return response.json();
   },
 
-  async sendCommand(command: DroneCommand): Promise<{ success: boolean }> {
+  async sendCommand(command: DroneCommand | { action: 'goto'; lat: number; lng: number }): Promise<{ success: boolean }>{
     if (USE_MOCK) {
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 300));
 
       if (command.action === 'takeoff') {
         mockDroneStatus.isFlying = true;
@@ -83,6 +85,11 @@ export const droneApi = {
         mockDroneStatus.speed = 0;
       } else if (command.action === 'return_home') {
         mockDroneStatus.gps = { lat: 10.7769, lng: 106.7009 };
+      } else if (command.action === 'goto') {
+        // In mock, jump the GPS to requested waypoint, set isFlying
+        mockDroneStatus.isFlying = true;
+        mockDroneStatus.gps = { lat: command.lat, lng: command.lng };
+        mockDroneStatus.speed = 5;
       }
 
       return { success: true };
